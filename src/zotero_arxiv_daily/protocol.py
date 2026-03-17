@@ -23,7 +23,11 @@ class Paper:
 
     def _generate_tldr_with_llm(self, openai_client:OpenAI,llm_params:dict) -> str:
         lang = llm_params.get('language', 'English')
-        prompt = f"Given the following information of a paper, generate a one-sentence TLDR summary in {lang}:\n\n"
+        prompt = (
+            f"Given the following information of a paper, generate a one-sentence TLDR summary in {lang}. "
+            "In that single sentence, include: (1) the research problem, (2) the core insight, "
+            "(3) the main result (preferably quantitative if available), and (4) the significance or application.\n\n"
+        )
         if self.title:
             prompt += f"Title:\n {self.title}\n\n"
 
