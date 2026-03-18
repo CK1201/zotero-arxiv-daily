@@ -1,5 +1,6 @@
 from .protocol import Paper
 import math
+import re
 
 
 framework = """
@@ -101,12 +102,33 @@ def get_block_html(title:str, authors:str, rate:str, tldr:str, pdf_url:str | Non
     )
 
 
-def build_alphaxiv_url(url: str | None) -> str | None:
-    if not url:
+def _extract_arxiv_id(url_or_id: str | None) -> str | None:
+    if not url_or_id:
         return None
-    if "arxiv" not in url:
+    value = url_or_id.strip()
+    if not value:
         return None
-    return url.replace("arxiv", "alphaxiv")
+
+    # URL cases, e.g. https://arxiv.org/abs/2603.15789v1 or https://arxiv.org/pdf/2603.15789v1.pdf
+    m = re.search(r"arxiv\.org/(?:abs|pdf)/([^/?#]+)", value)
+    if m:
+        paper_id = m.group(1)
+        if paper_id.endswith(".pdf"):
+            paper_id = paper_id[:-4]
+        return paper_id
+
+    # Raw id case, e.g. 2603.15789v1
+    if re.fullmatch(r"\d{4}\.\d{4,5}(?:v\d+)?", value):
+        return value
+
+    return None
+
+
+def build_alphaxiv_url(url_or_id: str | None) -> str | None:
+    paper_id = _extract_arxiv_id(url_or_id)
+    if not paper_id:
+        return None
+    return f"https://www.alphaxiv.org/overview/{paper_id}"
 
 def get_stars(score:float):
     full_star = '<span class="full-star">⭐</span>'
@@ -146,7 +168,8 @@ def render_email(papers:list[Paper]) -> str:
                 affiliations += ', ...'
         else:
             affiliations = 'Unknown Affiliation'
-        alphaxiv_url = build_alphaxiv_url(p.pdf_url)
+        # Prefer abstract URL because it often preserves version suffix like v1.
+        alphaxiv_url = build_alphaxiv_url(p.url) or build_alphaxiv_url(p.pdf_url)
         parts.append(get_block_html(p.title, authors, rate, p.tldr, p.pdf_url, affiliations, alphaxiv_url))
 
     content = '<br>' + '</br><br>'.join(parts) + '</br>'

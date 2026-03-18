@@ -22,7 +22,7 @@ def papers() -> list[Paper]:
 def test_render_email(papers:list[Paper]):
     email_content = render_email(papers)
     assert email_content is not None
-    assert "https://alphaxiv.org/pdf/2512.04296" in email_content
+    assert "https://www.alphaxiv.org/overview/2512.04296" in email_content
 
 @pytest.mark.ci
 def test_send_email(config,papers:list[Paper]):
