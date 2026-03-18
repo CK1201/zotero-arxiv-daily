@@ -80,10 +80,10 @@ def extract_text_from_pdf(paper: ArxivResult) -> str | None:
         try:
             urlretrieve(paper.pdf_url, path)
         except (HTTPError, URLError) as e:
-            logger.warning(f"Failed to download PDF for {paper.title}: {e}")
+            logger.warning(f"Failed to download pdf for {paper.title}: {type(e).__name__}: {e}")
             return None
         except Exception as e:
-            logger.warning(f"Unexpected error while downloading PDF for {paper.title}: {e}")
+            logger.warning(f"Failed to download pdf for {paper.title}: {type(e).__name__}: {e}")
             return None
         try:
             full_text = extract_markdown_from_pdf(path)
@@ -102,10 +102,10 @@ def extract_text_from_tar(paper: ArxivResult) -> str | None:
         try:
             urlretrieve(source_url, path)
         except (HTTPError, URLError) as e:
-            logger.warning(f"Failed to download source tar for {paper.title}: {e}")
+            logger.warning(f"Failed to download source for {paper.title}: {type(e).__name__}: {e}")
             return None
         except Exception as e:
-            logger.warning(f"Unexpected error while downloading source tar for {paper.title}: {e}")
+            logger.warning(f"Failed to download source for {paper.title}: {type(e).__name__}: {e}")
             return None
         try:
             file_contents = extract_tex_code_from_tar(path, paper.entry_id)
