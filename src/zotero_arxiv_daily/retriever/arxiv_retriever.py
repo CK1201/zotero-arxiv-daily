@@ -7,6 +7,7 @@ from tempfile import TemporaryDirectory
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 import feedparser
 from urllib.request import urlretrieve
+from urllib.error import HTTPError, URLError
 from tqdm import tqdm
 import os
 from loguru import logger
@@ -76,7 +77,14 @@ def extract_text_from_pdf(paper: ArxivResult) -> str | None:
         if paper.pdf_url is None:
             logger.warning(f"No PDF URL available for {paper.title}")
             return None
-        urlretrieve(paper.pdf_url, path)
+        try:
+            urlretrieve(paper.pdf_url, path)
+        except (HTTPError, URLError) as e:
+            logger.warning(f"Failed to download PDF for {paper.title}: {e}")
+            return None
+        except Exception as e:
+            logger.warning(f"Unexpected error while downloading PDF for {paper.title}: {e}")
+            return None
         try:
             full_text = extract_markdown_from_pdf(path)
         except Exception as e:
@@ -91,7 +99,14 @@ def extract_text_from_tar(paper: ArxivResult) -> str | None:
         if source_url is None:
             logger.warning(f"No source URL available for {paper.title}")
             return None
-        urlretrieve(source_url, path)
+        try:
+            urlretrieve(source_url, path)
+        except (HTTPError, URLError) as e:
+            logger.warning(f"Failed to download source tar for {paper.title}: {e}")
+            return None
+        except Exception as e:
+            logger.warning(f"Unexpected error while downloading source tar for {paper.title}: {e}")
+            return None
         try:
             file_contents = extract_tex_code_from_tar(path, paper.entry_id)
             if "all" not in file_contents:

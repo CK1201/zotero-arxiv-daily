@@ -27,7 +27,12 @@ class BaseRetriever(ABC):
             futures = {exec_pool.submit(self.convert_to_paper, rp): i for i, rp in enumerate(raw_papers)}
             papers = [None] * len(raw_papers)
             for future in tqdm(as_completed(futures), total=len(raw_papers), desc="Converting papers"):
-                papers[futures[future]] = future.result()
+                idx = futures[future]
+                try:
+                    papers[idx] = future.result()
+                except Exception as e:
+                    logger.warning(f"Skipping paper at index {idx} due to conversion error: {e}")
+                    papers[idx] = None
         return [p for p in papers if p is not None]
 
 registered_retrievers = {}
