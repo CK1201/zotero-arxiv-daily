@@ -1,11 +1,13 @@
 """Tests for zotero_arxiv_daily.utils: glob_match, send_email, tex extraction."""
 
+import io
 import smtplib
 import tarfile
-import io
+from types import SimpleNamespace
 
 import pytest
 
+import zotero_arxiv_daily.utils as utils
 from zotero_arxiv_daily.utils import glob_match, send_email, extract_tex_code_from_tar, _bm25_pick
 from tests.canned_responses import make_stub_smtp
 
@@ -184,6 +186,81 @@ def test_send_email_falls_back_to_plain(config, monkeypatch):
     monkeypatch.setattr(smtplib, "SMTP_SSL", StubSMTP_SSL_Fails)
     send_email(config, "<html>plain</html>")
     assert len(sent) == 1
+
+
+def test_send_email_rejects_empty_password_before_smtp(config, monkeypatch):
+    errors = []
+    config.email.sender_password = "   "
+
+    class StubSMTP:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("SMTP client should not be created when sender_password is empty")
+
+    monkeypatch.setattr(smtplib, "SMTP", StubSMTP)
+    monkeypatch.setattr(utils, "logger", SimpleNamespace(error=errors.append, debug=lambda _: None))
+
+    with pytest.raises(ValueError, match="sender_password"):
+        send_email(config, "<html>hello</html>")
+
+    assert any("SENDER_PASSWORD" in message for message in errors)
+
+
+def test_send_email_logs_invalid_credentials_hint(config, monkeypatch):
+    errors = []
+
+    class StubSMTPAuthFails:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def starttls(self):
+            pass
+
+        def login(self, user, password):
+            raise smtplib.SMTPAuthenticationError(535, b"Error: authentication failed")
+
+        def sendmail(self, sender, recipients, msg):
+            raise AssertionError("sendmail should not be called after auth failure")
+
+        def quit(self):
+            pass
+
+    monkeypatch.setattr(smtplib, "SMTP", StubSMTPAuthFails)
+    monkeypatch.setattr(utils, "logger", SimpleNamespace(error=errors.append, debug=lambda _: None))
+
+    with pytest.raises(smtplib.SMTPAuthenticationError):
+        send_email(config, "<html>hello</html>")
+
+    assert any("authorization code or password" in message for message in errors)
+    assert any("diagnosis=invalid_credentials" in message for message in errors)
+
+
+def test_send_email_logs_risk_control_hint(config, monkeypatch):
+    errors = []
+
+    class StubSMTPRiskRejected:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def starttls(self):
+            pass
+
+        def login(self, user, password):
+            raise smtplib.SMTPAuthenticationError(554, b"Client host rejected: suspicious login detected")
+
+        def sendmail(self, sender, recipients, msg):
+            raise AssertionError("sendmail should not be called after auth failure")
+
+        def quit(self):
+            pass
+
+    monkeypatch.setattr(smtplib, "SMTP", StubSMTPRiskRejected)
+    monkeypatch.setattr(utils, "logger", SimpleNamespace(error=errors.append, debug=lambda _: None))
+
+    with pytest.raises(smtplib.SMTPAuthenticationError):
+        send_email(config, "<html>hello</html>")
+
+    assert any("risk control" in message for message in errors)
+    assert any("diagnosis=risk_control" in message for message in errors)
 
 
 # ---------------------------------------------------------------------------

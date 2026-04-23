@@ -53,6 +53,68 @@ def _bm25_pick(query: str, candidates: dict[str, str], k1: float = 1.5, b: float
     return best_name
 
 
+def _clean_config_value(value: object) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _mask_email_address(address: str) -> str:
+    _, addr = parseaddr(address)
+    if not addr or "@" not in addr:
+        return "<invalid-email>"
+    local_part, domain = addr.split("@", 1)
+    if len(local_part) <= 2:
+        masked_local = local_part[:1] + "*" * max(len(local_part) - 1, 0)
+    else:
+        masked_local = local_part[:2] + "***"
+    return f"{masked_local}@{domain}"
+
+
+def _decode_smtp_error(error: bytes | str | None) -> str:
+    if error is None:
+        return "<empty>"
+    if isinstance(error, bytes):
+        return error.decode("utf-8", errors="replace")
+    return str(error)
+
+
+def _diagnose_smtp_auth_failure(exc: smtplib.SMTPAuthenticationError, password: str) -> tuple[str, str]:
+    if not password:
+        return (
+            "empty_secret",
+            "email.sender_password is empty. Check GitHub secret SENDER_PASSWORD.",
+        )
+
+    response = _decode_smtp_error(exc.smtp_error).lower()
+    risk_keywords = (
+        "suspicious",
+        "risk",
+        "blocked",
+        "rejected",
+        "reject",
+        "denied",
+        "deny",
+        "spam",
+        "abuse",
+        "policy",
+        "unusual",
+        "forbidden",
+    )
+    if any(keyword in response for keyword in risk_keywords):
+        return (
+            "risk_control",
+            "SMTP provider likely rejected this login due to risk control or IP reputation. "
+            "Review provider security alerts or use a mail service intended for automation.",
+        )
+
+    return (
+        "invalid_credentials",
+        "SMTP credentials were rejected. Check that SENDER matches the mailbox and "
+        "SENDER_PASSWORD is the SMTP authorization code or password expected by the provider.",
+    )
+
+
 def extract_tex_code_from_tar(file_path:str, paper_id:str, paper_title:str | None = None) -> dict[str,str]:
     try:
         tar = tarfile.open(file_path)
@@ -140,14 +202,29 @@ def glob_match(path:str, pattern:str) -> bool:
     return re.match(re_pattern, path) is not None
 
 def send_email(config:DictConfig, html:str):
-    sender = config.email.sender
-    receiver = config.email.receiver
-    password = config.email.sender_password
+    sender = _clean_config_value(config.email.sender)
+    receiver = _clean_config_value(config.email.receiver)
+    password = _clean_config_value(config.email.sender_password)
     smtp_server = config.email.smtp_server
     smtp_port = config.email.smtp_port
     def _format_addr(s):
         name, addr = parseaddr(s)
         return formataddr((Header(name, 'utf-8').encode(), addr))
+
+    missing_fields = []
+    if not sender:
+        missing_fields.append("email.sender / SENDER")
+    if not receiver:
+        missing_fields.append("email.receiver / RECEIVER")
+    if not password:
+        missing_fields.append("email.sender_password / SENDER_PASSWORD")
+    if missing_fields:
+        field_list = ", ".join(missing_fields)
+        logger.error(
+            f"SMTP configuration invalid: missing or empty required field(s): {field_list}. "
+            "Check your GitHub secrets/variables before rerunning."
+        )
+        raise ValueError(f"Missing SMTP configuration: {field_list}")
 
     msg = MIMEText(html, 'html', 'utf-8')
     msg['From'] = _format_addr('Github Action <%s>' % sender)
@@ -155,6 +232,7 @@ def send_email(config:DictConfig, html:str):
     today = datetime.datetime.now().strftime('%Y/%m/%d')
     msg['Subject'] = Header(f'Daily arXiv {today}', 'utf-8').encode()
 
+    transport = "starttls"
     try:
         server = smtplib.SMTP(smtp_server, smtp_port)
         server.starttls()
@@ -162,10 +240,27 @@ def send_email(config:DictConfig, html:str):
         logger.debug(f"Failed to use TLS. {e}\nTry to use SSL.")
         try:
             server = smtplib.SMTP_SSL(smtp_server, smtp_port)
+            transport = "ssl"
         except Exception as e:
             logger.debug(f"Failed to use SSL. {e}\nTry to use plain text.")
             server = smtplib.SMTP(smtp_server, smtp_port)
+            transport = "plain"
 
-    server.login(sender, password)
+    try:
+        server.login(sender, password)
+    except smtplib.SMTPAuthenticationError as exc:
+        diagnosis, hint = _diagnose_smtp_auth_failure(exc, password)
+        response = _decode_smtp_error(exc.smtp_error)
+        logger.error(
+            f"SMTP authentication failed: diagnosis={diagnosis}; "
+            f"sender={_mask_email_address(sender)}; server={smtp_server}:{smtp_port}; "
+            f"transport={transport}; smtp_code={exc.smtp_code}; smtp_response={response}; hint={hint}"
+        )
+        try:
+            server.quit()
+        except Exception:
+            pass
+        raise
+
     server.sendmail(sender, [receiver], msg.as_string())
     server.quit()
